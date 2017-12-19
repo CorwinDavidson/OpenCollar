@@ -7,9 +7,9 @@
 
 
 string g_sWearerID;
-list g_lOwner;
-list g_lTrust;
-list g_lBlock;//list of blacklisted UUID
+//list g_lOwner;
+//list g_lTrust;
+//list g_lBlock;//list of blacklisted UUID
 list g_lTempOwner;//list of temp owners UUID.  Temp owner is just like normal owner, but can't add new owners.
 
 key g_kGroup = "";
@@ -20,6 +20,8 @@ string g_sSubMenu = "Access";
 integer g_iRunawayDisable=0;
 
 string g_sDrop = "f364b699-fb35-1640-d40b-ba59bdd5f7b7";
+
+list g_lAuthTokens = ["owner","trust","block"]; // list of list types
 
 //MESSAGE MAP
 integer CMD_ZERO = 0;
@@ -131,10 +133,8 @@ AuthMenu(key kAv, integer iAuth) {
 
 RemPersonMenu(key kID, string sToken, integer iAuth) {
     list lPeople;
-    if (sToken=="owner") lPeople=g_lOwner;
-    else if (sToken=="tempowner") lPeople=g_lTempOwner;
-    else if (sToken=="trust") lPeople=g_lTrust;
-    else if (sToken=="block") lPeople=g_lBlock;
+    if (sToken=="tempowner") lPeople=g_lTempOwner;
+    else if (~llListFindList(g_lAuthTokens,[sToken])) lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
     else return;
     if (llGetListLength(lPeople)){
         string sPrompt = "\nChoose the person to remove:\n";
@@ -162,17 +162,15 @@ OwnSelfOff(key kID) {
 
 RemovePerson(string sPersonID, string sToken, key kCmdr, integer iPromoted) {
     list lPeople;
-    if (sToken=="owner") lPeople=g_lOwner;
-    else if (sToken=="tempowner") lPeople=g_lTempOwner;
-    else if (sToken=="trust") lPeople=g_lTrust;
-    else if (sToken=="block") lPeople=g_lBlock;
-    else return;
+    if (sToken == "tempowner") lPeople=g_lTempOwner;
+    else if (!~llListFindList(g_lAuthTokens,[sToken])) return;
 // ~ is bitwise NOT which is used for the llListFindList function to simply turn the result "-1" for "not found" into a 0 (FALSE)
-    if (~llListFindList(g_lTempOwner,[(string)kCmdr]) && ! ~llListFindList(g_lOwner,[(string)kCmdr]) && sToken != "tempowner"){
+    if (~llListFindList(g_lTempOwner,[(string)kCmdr]) && ! ~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[(string)kCmdr]) && sToken != "tempowner"){
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kCmdr);
         return;
     }
     integer iFound;
+    if (sToken != "tempowner") lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
     if (llGetListLength(lPeople) == 0) {//nothing to do
     } else {
         integer index = llListFindList(lPeople,[sPersonID]);
@@ -195,57 +193,58 @@ RemovePerson(string sPersonID, string sToken, key kCmdr, integer iPromoted) {
             llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + sToken, "");
         llMessageLinked(LINK_ALL_OTHERS, LM_SETTING_RESPONSE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
         //store temp list*/
-        if (sToken=="owner") {
-            g_lOwner = lPeople;
-            if (llGetListLength(g_lOwner)) SayOwners();
+        if (sToken=="tempowner") g_lTempOwner = lPeople;
+        else if (~llListFindList(g_lAuthTokens,[sToken])) {
+            setAuthList(llListFindList(g_lAuthTokens,[sToken]),lPeople);
+            if (sToken=="owner") {
+                if (llGetListLength(lPeople)>1) SayOwners();
+            }            
         }
-        else if (sToken=="tempowner") g_lTempOwner = lPeople;
-        else if (sToken=="trust") g_lTrust = lPeople;
-        else if (sToken=="block") g_lBlock = lPeople;
     } else
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\""+NameURI(sPersonID) + "\" is not in "+sToken+" list.",kCmdr);
 }
 
 AddUniquePerson(string sPersonID, string sToken, key kID) {
     list lPeople;
+    integer isOwner = FALSE;
+    integer isTrusted = FALSE;
+     integer isBlocked = FALSE;
     //Debug(llKey2Name(kAv)+" is adding "+llKey2Name(kPerson)+" to list "+sToken);
-    if (~llListFindList(g_lTempOwner,[(string)kID]) && ! ~llListFindList(g_lOwner,[(string)kID]) && sToken != "tempowner")
+    if (~llListFindList(g_lTempOwner,[(string)kID]) && ! ~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[(string)kID]) && sToken != "tempowner")
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
     else {
-        if (sToken=="owner") {
-            lPeople=g_lOwner;
-            if (llGetListLength (lPeople) >=3) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry, we reached a limit!\n\nThree people at a time can have this role.\n",kID);
+        if (~llListFindList(g_lAuthTokens,[sToken])) 
+        {
+            isOwner = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[sPersonID]));
+            isTrusted = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["trust"])),[sPersonID]));
+            isBlocked = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["block"])),[sPersonID]));            
+            lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
+            if (llGetListLength (lPeople) >= 50) {
+                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry, we reached a limit!\n\n50 people at a time can have this role.\n",kID);
                 return;
             }
-        } else if (sToken=="trust") {
-            lPeople=g_lTrust;
-            if (llGetListLength (lPeople) >=15) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry, we reached a limit!\n\n15 people at a time can have this role.\n",kID);
-                return;
-            } else if (~llListFindList(g_lOwner,[sPersonID])) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" is already Owner! You should really trust them.\n",kID);
-                return;
-            } else if (sPersonID==g_sWearerID) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" doesn't belong on this list as the wearer of the %DEVICETYPE%. Instead try: /%CHANNEL% %PREFIX% ownself on\n",kID);
-                return;
-            }
+            
+            if (sToken=="trust") {
+                if (isOwner) {
+                    llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" is already Owner! You should really trust them.\n",kID);
+                    return;
+                } else if (sPersonID==g_sWearerID) {
+                    llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" doesn't belong on this list as the wearer of the %DEVICETYPE%. Instead try: /%CHANNEL% %PREFIX% ownself on\n",kID);
+                    return;
+                }
+            } else if (sToken=="block") {
+                if (isTrusted) {
+                    llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\nYou trust "+NameURI(sPersonID)+". If you really want to block "+NameURI(sPersonID)+" then you should remove them as trusted first.\n",kID);
+                    return;
+                } else if (isOwner) {
+                    llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" is Owner! Remove them as owner before you block them.\n",kID);
+                    return;
+                }
+            }                
         } else if (sToken=="tempowner") {
             lPeople=g_lTempOwner;
             if (llGetListLength (lPeople) >=1) {
                 llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry!\n\nYou can only be captured by one person at a time.\n",kID);
-                return;
-            }
-        } else if (sToken=="block") {
-            lPeople=g_lBlock;
-            if (llGetListLength (lPeople) >=9) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\nYour Blocklist is already full.\n",kID);
-                return;
-            } else if (~llListFindList(g_lTrust,[sPersonID])) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\nYou trust "+NameURI(sPersonID)+". If you really want to block "+NameURI(sPersonID)+" then you should remove them as trusted first.\n",kID);
-                return;
-            } else if (~llListFindList(g_lOwner,[sPersonID])) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nOops!\n\n"+NameURI(sPersonID)+" is Owner! Remove them as owner before you block them.\n",kID);
                 return;
             }
         } else return;
@@ -258,11 +257,11 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
         }
         if (sPersonID != g_sWearerID) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Building relationship...",g_sWearerID);
         if (sToken == "owner") {
-            if (~llListFindList(g_lTrust,[sPersonID])) RemovePerson(sPersonID, "trust", kID, TRUE);
-            if (~llListFindList(g_lBlock,[sPersonID])) RemovePerson(sPersonID, "block", kID, TRUE);
+            if (isTrusted) RemovePerson(sPersonID, "trust", kID, TRUE);
+            if (isBlocked) RemovePerson(sPersonID, "block", kID, TRUE);
             llPlaySound(g_sDrop,1.0);
         } else if (sToken == "trust") {
-            if (~llListFindList(g_lBlock,[sPersonID])) RemovePerson(sPersonID, "block", kID, TRUE);
+            if (isBlocked) RemovePerson(sPersonID, "block", kID, TRUE);
             if (sPersonID != g_sWearerID) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Looks like "+NameURI(sPersonID)+" is someone you can trust!",g_sWearerID);
             llPlaySound(g_sDrop,1.0);
         }
@@ -280,19 +279,23 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
         llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
         llMessageLinked(LINK_ALL_OTHERS, LM_SETTING_RESPONSE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
         if (sToken=="owner") {
-            g_lOwner = lPeople;
-            if (llGetListLength(g_lOwner)>1 || sPersonID != g_sWearerID) SayOwners();
+            if (llGetListLength(lPeople)>1 || sPersonID != g_sWearerID) SayOwners();
         }
-        else if (sToken=="trust") g_lTrust = lPeople;
-        else if (sToken=="tempowner") g_lTempOwner = lPeople;
-        else if (sToken=="block") g_lBlock = lPeople;
+        if (sToken=="tempowner") g_lTempOwner = lPeople;
+        else if (~llListFindList(g_lAuthTokens,[sToken])) {
+            setAuthList(llListFindList(g_lAuthTokens,[sToken]),lPeople);
+            if (sToken=="owner") {
+                if (llGetListLength(lPeople)>1 || sPersonID != g_sWearerID) SayOwners();
+            }
+        }        
     }
 }
 
 SayOwners() {  // Give a "you are owned by" message, nicely formatted.
-    integer iCount = llGetListLength(g_lOwner);
+    list lPeople = getAuthList(llListFindList(g_lAuthTokens,["owner"]));
+    integer iCount = llGetListLength(lPeople);
     if (iCount) {
-        list lTemp = g_lOwner;
+        list lTemp = lPeople;
         integer index = llListFindList(lTemp, [g_sWearerID]);
         //if wearer is also owner, move the key to the end of the list.
         if (~index) lTemp = llDeleteSubList(lTemp,index,index) + [g_sWearerID];
@@ -335,14 +338,14 @@ integer in_range(key kID) {
 integer Auth(string sObjID) {
     string sID = (string)llGetOwnerKey(sObjID); // if sObjID is an avatar key, then sID is the same key
     integer iNum;
-    if (~llListFindList(g_lOwner+g_lTempOwner, [sID]))
+    if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"]))+g_lTempOwner, [sID]))
         iNum = CMD_OWNER;
-    else if (llGetListLength(g_lOwner+g_lTempOwner) == 0 && sID == g_sWearerID)
+    else if (llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"]))+g_lTempOwner) == 0 && sID == g_sWearerID)
         //if no owners set, then wearer's cmds have owner auth
         iNum = CMD_OWNER;
-    else if (~llListFindList(g_lBlock, [sID]))
+    else if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["block"])), [sID]))
         iNum = CMD_BLOCKED;
-    else if (~llListFindList(g_lTrust, [sID]))
+    else if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["trust"])), [sID]))
         iNum = CMD_TRUSTED;
     else if (sID == g_sWearerID)
         iNum = CMD_WEARER;
@@ -374,10 +377,10 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
     else if (sStr == "list") {   //say owner, secowners, group
         if (iNum == CMD_OWNER || kID == g_sWearerID) {
             //Do Owners list
-            integer iLength = llGetListLength(g_lOwner);
+            integer iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"])));
             string sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(g_lOwner, --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["owner"])), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: "+sOutput,kID);
             else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: none",kID);
             iLength = llGetListLength(g_lTempOwner);
@@ -385,15 +388,15 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
             while (iLength)
                 sOutput += "\n" + NameURI(llList2String(g_lTempOwner, --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary Owner: "+sOutput,kID);
-            iLength = llGetListLength(g_lTrust);
+            iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["trust"])));
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(g_lTrust, --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["trust"])), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: "+sOutput,kID);
-            iLength = llGetListLength(g_lBlock);
+            iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["block"])));
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(g_lBlock, --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["block"])), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Blocked: "+sOutput,kID);
             //if (g_sGroupName) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: "+g_sGroupName,kID);
             if (g_kGroup) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: secondlife:///app/group/"+(string)g_kGroup+"/about",kID);
@@ -528,12 +531,39 @@ RunAway() {
     llResetScript();
 }
 
+setAuthList(integer iList, list lAuthList)
+{
+    integer iMax = llGetListLength(lAuthList);
+    integer iHalf = 25;
+
+    if (iMax > iHalf)
+    {
+         llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,llDumpList2String(llList2List(lAuthList,0,iHalf-1),","),PRIM_MEDIA_WHITELIST,llDumpList2String(llList2List(lAuthList,iHalf,iMax),","),PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+    }
+    else if (iMax <= iHalf)
+    {
+        llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,llDumpList2String(lAuthList,","),PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+    }
+    else
+    {
+        llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,"",PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+    }
+}
+
+list getAuthList(integer iList)
+{
+    string sList = (string)llGetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL]) + "," + (string)llGetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_WHITELIST]);
+    if (llStringLength(sList) > 1) return llParseString2List(sList,[","],[]);
+    else return [];
+}
+
 default {
     on_rez(integer iParam) {
         llResetScript();
     }
 
     state_entry() {
+        integer n;
         if (llGetStartParameter()==825) llSetRemoteScriptAccessPin(0);
         else g_iFirstRun = TRUE;
       /*  if (g_iProfiled){
@@ -543,6 +573,10 @@ default {
         //llSetMemoryLimit(65536);
         g_sWearerID = llGetOwner();
         llMessageLinked(LINK_ALL_OTHERS,LINK_UPDATE,"LINK_REQUEST","");
+        for (n=0;n<=3;n++)
+        {
+            setAuthList(n,[]);
+        }
     }
 
     link_message(integer iSender, integer iNum, string sStr, key kID) {
@@ -567,13 +601,15 @@ default {
             list lParams = llParseString2List(sStr, ["="], []);
             string sToken = llList2String(lParams, 0);
             string sValue = llList2String(lParams, 1);
+            lParams = [];
             integer i = llSubStringIndex(sToken, "_");
             if (llGetSubString(sToken, 0, i) == g_sSettingToken) {
                 sToken = llGetSubString(sToken, i + 1, -1);
                 if (sToken == "owner") {
-                    g_lOwner = llParseString2List(sValue, [","], []);
+                    setAuthList(llListFindList(g_lAuthTokens,[sToken]), llParseString2List(sValue, [","], []));
                     if (~llSubStringIndex(sValue,g_sWearerID)) g_iOwnSelf = TRUE;
                     else g_iOwnSelf = FALSE;
+                    sValue="";
                 } else if (sToken == "tempowner")
                     g_lTempOwner = llParseString2List(sValue, [","], []);
                     //Debug("Tempowners: "+llDumpList2String(g_lTempOwner,","));
@@ -588,11 +624,17 @@ default {
                 else if (sToken == "public") g_iOpenAccess = (integer)sValue;
                 else if (sToken == "limitrange") g_iLimitRange = (integer)sValue;
                 else if (sToken == "norun") g_iRunawayDisable = (integer)sValue;
-                else if (sToken == "trust") g_lTrust = llParseString2List(sValue, [","], [""]);
-                else if (sToken == "block") g_lBlock = llParseString2List(sValue, [","], [""]);
+                else if (sToken == "trust") { 
+                    setAuthList(llListFindList(g_lAuthTokens,[sToken]),llParseString2List(sValue, [","], [""]));
+                    sValue="";
+                    }
+                else if (sToken == "block") {
+                    setAuthList(llListFindList(g_lAuthTokens,[sToken]),llParseString2List(sValue, [","], [""]));
+                    sValue="";
+                    }
                 else if (sToken == "flavor") g_sFlavor = sValue;
             } else if (llToLower(sStr) == "settings=sent") {
-                if (llGetListLength(g_lOwner) && g_iFirstRun) {
+                if (llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"]))) && g_iFirstRun) {
                     SayOwners();
                     g_iFirstRun = FALSE;
                 }
