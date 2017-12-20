@@ -7,12 +7,6 @@
 
 
 string g_sWearerID;
-//list g_lOwner;
-//list g_lTrust;
-//list g_lBlock;//list of blacklisted UUID
-list g_lTempOwner;//list of temp owners UUID.  Temp owner is just like normal owner, but can't add new owners.
-
-key g_kGroup = "";
 integer g_iGroupEnabled = FALSE;
 
 string g_sParentMenu = "Main";
@@ -21,7 +15,11 @@ integer g_iRunawayDisable=0;
 
 string g_sDrop = "f364b699-fb35-1640-d40b-ba59bdd5f7b7";
 
-list g_lAuthTokens = ["owner","trust","block"]; // list of list types
+integer OWNER_LIST = 1;
+integer TRUST_LIST = 2;
+integer BLOCK_LIST = 3;
+
+integer LINK_AUTH;
 
 //MESSAGE MAP
 integer CMD_ZERO = 0;
@@ -71,8 +69,6 @@ integer AUTH_REQUEST = 600;
 integer AUTH_REPLY = 601;
 string UPMENU = "BACK";
 
-integer g_iOpenAccess; // 0: disabled, 1: openaccess
-integer g_iLimitRange=1; // 0: disabled, 1: limited
 integer g_iOwnSelf; // self-owned wearers
 string g_sFlavor = "OwnSelf";
 
@@ -120,9 +116,9 @@ AuthMenu(key kAv, integer iAuth) {
     string sPrompt = "\n[Access & Authorization]";
     list lButtons = ["+ Owner", "+ Trust", "+ Block", "− Owner", "− Trust", "− Block"];
 
-    if (g_kGroup=="") lButtons += ["Group ☐"];    //set group
+    if ( ((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST])) == "") lButtons += ["Group ☐"];    //set group
     else lButtons += ["Group ☑"];    //unset group
-    if (g_iOpenAccess) lButtons += ["Public ☑"];    //set open access
+    if ((integer)((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE]))) lButtons += ["Public ☑"];    //set open access
     else lButtons += ["Public ☐"];    //unset open access
     if (g_iOwnSelf) lButtons += g_sFlavor+" ☑";    //add wearer as owner
     else lButtons += g_sFlavor+" ☐";    //remove wearer as owner
@@ -133,8 +129,9 @@ AuthMenu(key kAv, integer iAuth) {
 
 RemPersonMenu(key kID, string sToken, integer iAuth) {
     list lPeople;
-    if (sToken=="tempowner") lPeople=g_lTempOwner;
-    else if (~llListFindList(g_lAuthTokens,[sToken])) lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
+    if (sToken=="owner") lPeople = getAuthList(OWNER_LIST);
+    else if (sToken=="trust") lPeople = getAuthList(TRUST_LIST);
+    else if (sToken=="block") lPeople = getAuthList(BLOCK_LIST);
     else return;
     if (llGetListLength(lPeople)){
         string sPrompt = "\nChoose the person to remove:\n";
@@ -162,15 +159,18 @@ OwnSelfOff(key kID) {
 
 RemovePerson(string sPersonID, string sToken, key kCmdr, integer iPromoted) {
     list lPeople;
-    if (sToken == "tempowner") lPeople=g_lTempOwner;
-    else if (!~llListFindList(g_lAuthTokens,[sToken])) return;
+    string kTempOwner = (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]);
+    if (!~llListFindList(["tempowner","owner","trust","block"],[sToken])) return;
 // ~ is bitwise NOT which is used for the llListFindList function to simply turn the result "-1" for "not found" into a 0 (FALSE)
-    if (~llListFindList(g_lTempOwner,[(string)kCmdr]) && ! ~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[(string)kCmdr]) && sToken != "tempowner"){
+    if ((kTempOwner == (string)kCmdr) && ! hasAuth(OWNER_LIST,(string)kCmdr) && sToken != "tempowner"){
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kCmdr);
         return;
     }
     integer iFound;
-    if (sToken != "tempowner") lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
+    if (sToken=="tempowner") lPeople = llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]);
+    else if (sToken=="owner") lPeople = getAuthList(OWNER_LIST);
+    else if (sToken=="trust") lPeople = getAuthList(TRUST_LIST);
+    else if (sToken=="block") lPeople = getAuthList(BLOCK_LIST);
     if (llGetListLength(lPeople) == 0) {//nothing to do
     } else {
         integer index = llListFindList(lPeople,[sPersonID]);
@@ -193,34 +193,38 @@ RemovePerson(string sPersonID, string sToken, key kCmdr, integer iPromoted) {
             llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + sToken, "");
         llMessageLinked(LINK_ALL_OTHERS, LM_SETTING_RESPONSE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
         //store temp list*/
-        if (sToken=="tempowner") g_lTempOwner = lPeople;
-        else if (~llListFindList(g_lAuthTokens,[sToken])) {
-            setAuthList(llListFindList(g_lAuthTokens,[sToken]),lPeople);
-            if (sToken=="owner") {
-                if (llGetListLength(lPeople)>1) SayOwners();
-            }            
-        }
+        if (sToken=="tempowner") llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL,(string)lPeople]);
+        else if (sToken=="owner") { 
+            setAuthList(OWNER_LIST,lPeople);
+            if (llGetListLength(lPeople)>1) SayOwners();
+        }  
+        else if (sToken=="trust") setAuthList(TRUST_LIST,lPeople);
+        else if (sToken=="block") setAuthList(BLOCK_LIST,lPeople);      
     } else
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\""+NameURI(sPersonID) + "\" is not in "+sToken+" list.",kCmdr);
 }
 
 AddUniquePerson(string sPersonID, string sToken, key kID) {
     list lPeople;
+    string kTempOwner = (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]);
     integer isOwner = FALSE;
     integer isTrusted = FALSE;
-     integer isBlocked = FALSE;
+    integer isBlocked = FALSE;
+
     //Debug(llKey2Name(kAv)+" is adding "+llKey2Name(kPerson)+" to list "+sToken);
-    if (~llListFindList(g_lTempOwner,[(string)kID]) && ! ~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[(string)kID]) && sToken != "tempowner")
+    if ((kTempOwner == (string)kID) && ! hasAuth(OWNER_LIST,(string)kID) && sToken != "tempowner")    
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
     else {
-        if (~llListFindList(g_lAuthTokens,[sToken])) 
+        if (~llListFindList(["owner","trust","block"],[sToken])) 
         {
-            isOwner = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"])),[sPersonID]));
-            isTrusted = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["trust"])),[sPersonID]));
-            isBlocked = (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["block"])),[sPersonID]));            
-            lPeople = getAuthList(llListFindList(g_lAuthTokens,[sToken]));
-            if (llGetListLength (lPeople) >= 50) {
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry, we reached a limit!\n\n50 people at a time can have this role.\n",kID);
+            isOwner = hasAuth(OWNER_LIST,sPersonID);
+            isTrusted = hasAuth(TRUST_LIST,sPersonID);
+            isBlocked = hasAuth(BLOCK_LIST,sPersonID);
+            if (sToken=="owner") lPeople = getAuthList(OWNER_LIST);
+            else if (sToken=="trust") lPeople = getAuthList(TRUST_LIST);
+            else if (sToken=="block") lPeople = getAuthList(BLOCK_LIST);
+            if (llGetListLength (lPeople) >= 35) {
+                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry, we reached a limit!\n\n35 people at a time can have this role.\n",kID);
                 return;
             }
             
@@ -242,7 +246,7 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
                 }
             }                
         } else if (sToken=="tempowner") {
-            lPeople=g_lTempOwner;
+            lPeople=llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]);
             if (llGetListLength (lPeople) >=1) {
                 llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nSorry!\n\nYou can only be captured by one person at a time.\n",kID);
                 return;
@@ -278,21 +282,18 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
             llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\n%WEARERNAME% seems to trust you.\n\nSee [https://github.com/OpenCollarTeam/OpenCollar/wiki/Access here] what that means!\n",sPersonID);
         llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
         llMessageLinked(LINK_ALL_OTHERS, LM_SETTING_RESPONSE, g_sSettingToken + sToken + "=" + llDumpList2String(lPeople, ","), "");
-        if (sToken=="owner") {
+        if (sToken=="tempowner") llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL,(string)lPeople,PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+        else if (sToken=="owner") { 
+            setAuthList(OWNER_LIST,lPeople);
             if (llGetListLength(lPeople)>1 || sPersonID != g_sWearerID) SayOwners();
-        }
-        if (sToken=="tempowner") g_lTempOwner = lPeople;
-        else if (~llListFindList(g_lAuthTokens,[sToken])) {
-            setAuthList(llListFindList(g_lAuthTokens,[sToken]),lPeople);
-            if (sToken=="owner") {
-                if (llGetListLength(lPeople)>1 || sPersonID != g_sWearerID) SayOwners();
-            }
-        }        
+        }  
+        else if (sToken=="trust") setAuthList(TRUST_LIST,lPeople);
+        else if (sToken=="block") setAuthList(BLOCK_LIST,lPeople);                
     }
 }
 
 SayOwners() {  // Give a "you are owned by" message, nicely formatted.
-    list lPeople = getAuthList(llListFindList(g_lAuthTokens,["owner"]));
+    list lPeople = getAuthList(OWNER_LIST);
     integer iCount = llGetListLength(lPeople);
     if (iCount) {
         list lTemp = lPeople;
@@ -316,11 +317,18 @@ SayOwners() {  // Give a "you are owned by" message, nicely formatted.
             do {
                 sMsg += NameURI(llList2String(lTemp,index))+", ";
                 index+=1;
-            } while (index<iCount-1);
-            if (llList2String(lTemp,index) == g_sWearerID)
-                sMsg += "and yourself.";
-            else
-                sMsg += "and "+NameURI(llList2String(lTemp,index))+".";
+            } while (index<iCount-1 && index < 9 );
+            if (iCount > 10) {
+                sMsg += NameURI(llList2String(lTemp,index))+" et al.";
+                if (llList2String(lTemp,index) == g_sWearerID)
+                    sMsg += " and yourself.";
+            }
+            else {
+                if (llList2String(lTemp,index) == g_sWearerID)
+                    sMsg += "and yourself.";
+                else
+                    sMsg += "and "+NameURI(llList2String(lTemp,index))+".";     
+            }
         }
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+sMsg,g_sWearerID);
  //       Debug("Lists Loaded!");
@@ -328,7 +336,7 @@ SayOwners() {  // Give a "you are owned by" message, nicely formatted.
 }
 
 integer in_range(key kID) {
-    if (g_iLimitRange) {
+    if ((integer)((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP]))) {
         if (llVecDist(llGetPos(), llList2Vector(llGetObjectDetails(kID, [OBJECT_POS]), 0)) > 20) //if the distance between my position and their position  > 20
             return FALSE;
     }
@@ -338,25 +346,31 @@ integer in_range(key kID) {
 integer Auth(string sObjID) {
     string sID = (string)llGetOwnerKey(sObjID); // if sObjID is an avatar key, then sID is the same key
     integer iNum;
-    if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["owner"]))+g_lTempOwner, [sID]))
+
+    integer iOpenAccess = (integer)((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE]));
+    integer iGroupEnabled = (integer)((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_ZOOM]));
+    string kTempOwner = (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]);
+    string kGroup = (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]);
+
+    if (hasAuth(OWNER_LIST,sID) || kTempOwner == sID)
         iNum = CMD_OWNER;
-    else if (llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"]))+g_lTempOwner) == 0 && sID == g_sWearerID)
+    else if ((llGetListLength(getAuthList(OWNER_LIST)) == 0 && kTempOwner == "") && sID == g_sWearerID)
         //if no owners set, then wearer's cmds have owner auth
         iNum = CMD_OWNER;
-    else if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["block"])), [sID]))
+    else if (hasAuth(BLOCK_LIST,sID))
         iNum = CMD_BLOCKED;
-    else if (~llListFindList(getAuthList(llListFindList(g_lAuthTokens,["trust"])), [sID]))
+    else if (hasAuth(TRUST_LIST,sID))
         iNum = CMD_TRUSTED;
     else if (sID == g_sWearerID)
         iNum = CMD_WEARER;
-    else if (g_iOpenAccess)
+    else if (iOpenAccess)
         if (in_range((key)sID))
             iNum = CMD_GROUP;
         else
             iNum = CMD_EVERYONE;
-    else if (g_iGroupEnabled && (string)llGetObjectDetails((key)sObjID, [OBJECT_GROUP]) == (string)g_kGroup && (key)sID != g_sWearerID)  //meaning that the command came from an object set to our control group, and is not owned by the wearer
+    else if (iGroupEnabled && (string)llGetObjectDetails((key)sObjID, [OBJECT_GROUP]) == kGroup && (key)sID != g_sWearerID)  //meaning that the command came from an object set to our control group, and is not owned by the wearer
         iNum = CMD_GROUP;
-    else if (llSameGroup(sID) && g_iGroupEnabled && sID != g_sWearerID) {
+    else if (llSameGroup(sID) && iGroupEnabled && sID != g_sWearerID) {
         if (in_range((key)sID))
             iNum = CMD_GROUP;
         else
@@ -377,37 +391,42 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
     else if (sStr == "list") {   //say owner, secowners, group
         if (iNum == CMD_OWNER || kID == g_sWearerID) {
             //Do Owners list
-            integer iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"])));
+            integer iLength = llGetListLength(getAuthList(OWNER_LIST));
             string sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["owner"])), --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(OWNER_LIST), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: "+sOutput,kID);
             else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: none",kID);
-            iLength = llGetListLength(g_lTempOwner);
+            if ((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]) != "") iLength = 1;
+            else iLength = 0;
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(g_lTempOwner, --iLength));
+                sOutput += "\n" + NameURI((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary Owner: "+sOutput,kID);
-            iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["trust"])));
+            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary: none",kID);            
+            iLength = llGetListLength(getAuthList(TRUST_LIST));
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["trust"])), --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(TRUST_LIST), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: "+sOutput,kID);
-            iLength = llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["block"])));
+            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: none",kID);            
+            iLength = llGetListLength(getAuthList(BLOCK_LIST));
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(getAuthList(llListFindList(g_lAuthTokens,["block"])), --iLength));
+                sOutput += "\n" + NameURI(llList2String(getAuthList(BLOCK_LIST), --iLength));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Blocked: "+sOutput,kID);
+            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Blocked: none",kID);            
             //if (g_sGroupName) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: "+g_sGroupName,kID);
-            if (g_kGroup) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: secondlife:///app/group/"+(string)g_kGroup+"/about",kID);
+            if ((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST])) 
+                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: secondlife:///app/group/"+(string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST])+"/about",kID);
             sOutput="closed";
-            if (g_iOpenAccess) sOutput="open";
+            if ((integer)((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE]))) sOutput="open";
             llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Public Access: "+ sOutput,kID);
         }
         else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         if (iRemenu) AuthMenu(kID, iNum);
     } else if (sCommand == "ownself" || sCommand == llToLower(g_sFlavor)) {
-        if (iNum == CMD_OWNER && !~llListFindList(g_lTempOwner,[(string)kID])) {
+        if (iNum == CMD_OWNER && !((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]) == (string)kID)) {
             if (sAction == "on") {
                 //g_iOwnSelf = TRUE;
                 UserCommand(iNum, "add owner " + g_sWearerID, kID, FALSE);
@@ -449,19 +468,19 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
          if (iNum==CMD_OWNER){
              if (sAction == "on") {
                 //if key provided use that, else read current group
-                if ((key)(llList2String(lParams, -1))) g_kGroup = (key)llList2String(lParams, -1);
-                else g_kGroup = (key)llList2String(llGetObjectDetails(llGetKey(), [OBJECT_GROUP]), 0); //record current group key
+                if ((key)(llList2String(lParams, -1))) llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST,(string)llList2String(lParams, -1)]);
+                else llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST,llList2String(llGetObjectDetails(llGetKey(), [OBJECT_GROUP]), 0)]); //record current group key
     
-                if (g_kGroup != "") {
-                    llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "group=" + (string)g_kGroup, "");
-                    g_iGroupEnabled = TRUE;
+                if ((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]) != "") {
+                    llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "group=" + (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]), "");
+                    llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_ZOOM,TRUE]);
                     llMessageLinked(LINK_RLV, RLV_CMD, "setgroup=n", "auth");
-                    llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Group set to secondlife:///app/group/" + (string)g_kGroup + "/about\n\nNOTE: If RLV is enabled, the group slot has been locked and group mode has to be disabled before %WEARERNAME% can switch to another group again.\n",kID);
+                    llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Group set to secondlife:///app/group/" + (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]) + "/about\n\nNOTE: If RLV is enabled, the group slot has been locked and group mode has to be disabled before %WEARERNAME% can switch to another group again.\n",kID);
                 }
             } else if (sAction == "off") {
-                g_kGroup = "";
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST,""]);
                 llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + "group", "");
-                g_iGroupEnabled = FALSE;
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_ZOOM,FALSE]);
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Group unset.",kID);
                 llMessageLinked(LINK_RLV, RLV_CMD, "setgroup=y", "auth");
             }
@@ -470,11 +489,11 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
     } else if (sCommand == "public") {
         if (iNum==CMD_OWNER){
             if (sAction == "on") {
-                g_iOpenAccess = TRUE;
-                llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "public=" + (string) g_iOpenAccess, "");
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,TRUE]);
+                llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "public=" + (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE]), "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"The %DEVICETYPE% is open to the public.",kID);
             } else if (sAction == "off") {
-                g_iOpenAccess = FALSE;
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,FALSE]);
                 llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + "public", "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"The %DEVICETYPE% is closed to the public.",kID);
             }
@@ -483,14 +502,14 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
     } else if (sCommand == "limitrange") {
         if (iNum==CMD_OWNER){
             if (sAction == "on") {
-                g_iLimitRange = TRUE;
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP,TRUE]);
                 // as the default is range limit on, we do not need to store anything for this
                 llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + "limitrange", "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Public access range is limited.",kID);
             } else if (sAction == "off") {
-                g_iLimitRange = FALSE;
+                llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP,FALSE]);
                 // save off state for limited range (default is on)
-                llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "limitrange=" + (string) g_iLimitRange, "");
+                llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "limitrange=" + (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP]), "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Public access range is simwide.",kID);
             }
         } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
@@ -531,6 +550,7 @@ RunAway() {
     llResetScript();
 }
 
+
 setAuthList(integer iList, list lAuthList)
 {
     integer iMax = llGetListLength(lAuthList);
@@ -538,23 +558,28 @@ setAuthList(integer iList, list lAuthList)
 
     if (iMax > iHalf)
     {
-         llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,llDumpList2String(llList2List(lAuthList,0,iHalf-1),","),PRIM_MEDIA_WHITELIST,llDumpList2String(llList2List(lAuthList,iHalf,iMax),","),PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+         llSetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL,llDumpList2String(llList2List(lAuthList,0,iHalf-1),","),PRIM_MEDIA_WHITELIST,llDumpList2String(llList2List(lAuthList,iHalf,iMax),","),PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
     }
     else if (iMax <= iHalf)
     {
-        llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,llDumpList2String(lAuthList,","),PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+        llSetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL,llDumpList2String(lAuthList,","),PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
     }
-    else
+    else if (iMax == 0)
     {
-        llSetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL,"",PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+        llSetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL,"",PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
     }
 }
 
 list getAuthList(integer iList)
 {
-    string sList = (string)llGetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_HOME_URL]) + "," + (string)llGetLinkMedia(LINK_THIS,iList+1,[PRIM_MEDIA_WHITELIST]);
+    string sList = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + "," + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
     if (llStringLength(sList) > 1) return llParseString2List(sList,[","],[]);
     else return [];
+}
+
+integer hasAuth(integer iList, string kID)
+{
+    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + "," + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]), kID);
 }
 
 default {
@@ -573,10 +598,14 @@ default {
         //llSetMemoryLimit(65536);
         g_sWearerID = llGetOwner();
         llMessageLinked(LINK_ALL_OTHERS,LINK_UPDATE,"LINK_REQUEST","");
+        LINK_AUTH = llGetLinkNumber();
+        
         for (n=0;n<=3;n++)
         {
             setAuthList(n,[]);
         }
+        llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP,TRUE,PRIM_MEDIA_AUTO_SCALE,FALSE,PRIM_MEDIA_AUTO_ZOOM,FALSE]);
+        llOwnerSay((string)llGetFreeMemory());
     }
 
     link_message(integer iSender, integer iNum, string sStr, key kID) {
@@ -606,35 +635,34 @@ default {
             if (llGetSubString(sToken, 0, i) == g_sSettingToken) {
                 sToken = llGetSubString(sToken, i + 1, -1);
                 if (sToken == "owner") {
-                    setAuthList(llListFindList(g_lAuthTokens,[sToken]), llParseString2List(sValue, [","], []));
+                    setAuthList(OWNER_LIST, llParseString2List(sValue, [","], []));
                     if (~llSubStringIndex(sValue,g_sWearerID)) g_iOwnSelf = TRUE;
                     else g_iOwnSelf = FALSE;
                     sValue="";
                 } else if (sToken == "tempowner")
-                    g_lTempOwner = llParseString2List(sValue, [","], []);
-                    //Debug("Tempowners: "+llDumpList2String(g_lTempOwner,","));
+                    llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL,sValue]);
                 else if (sToken == "group") {
-                    g_kGroup = (key)sValue;
+                    llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST,sValue]);
                     //check to see if the object's group is set properly
-                    if (g_kGroup != "") {
-                        if ((key)llList2String(llGetObjectDetails(llGetKey(), [OBJECT_GROUP]), 0) == g_kGroup) g_iGroupEnabled = TRUE;
-                        else g_iGroupEnabled = FALSE;
-                    } else g_iGroupEnabled = FALSE;
+                    if ((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST]) != "") {
+                        if ((key)llList2String(llGetObjectDetails(llGetKey(), [OBJECT_GROUP]), 0) == (string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_WHITELIST])) llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,TRUE]);
+                        else llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,FALSE]);
+                    } else llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,FALSE]);
                 }
-                else if (sToken == "public") g_iOpenAccess = (integer)sValue;
-                else if (sToken == "limitrange") g_iLimitRange = (integer)sValue;
+                else if (sToken == "public") llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_SCALE,(integer)sValue]);
+                else if (sToken == "limitrange") llSetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_AUTO_LOOP,(integer)sValue]);
                 else if (sToken == "norun") g_iRunawayDisable = (integer)sValue;
                 else if (sToken == "trust") { 
-                    setAuthList(llListFindList(g_lAuthTokens,[sToken]),llParseString2List(sValue, [","], [""]));
+                    setAuthList(TRUST_LIST,llParseString2List(sValue, [","], [""]));
                     sValue="";
                     }
                 else if (sToken == "block") {
-                    setAuthList(llListFindList(g_lAuthTokens,[sToken]),llParseString2List(sValue, [","], [""]));
+                    setAuthList(BLOCK_LIST,llParseString2List(sValue, [","], [""]));
                     sValue="";
                     }
                 else if (sToken == "flavor") g_sFlavor = sValue;
             } else if (llToLower(sStr) == "settings=sent") {
-                if (llGetListLength(getAuthList(llListFindList(g_lAuthTokens,["owner"]))) && g_iFirstRun) {
+                if (llGetListLength(getAuthList(OWNER_LIST)) && g_iFirstRun) {
                     SayOwners();
                     g_iFirstRun = FALSE;
                 }
