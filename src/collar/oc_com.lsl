@@ -4,6 +4,9 @@
 // Romka Swallowtail, Sumi Perl et al.  
 // Licensed under the GPLv2.  See LICENSE for full details. 
 
+integer OWNER_LIST = 1;
+integer TRUST_LIST = 2;
+integer BLOCK_LIST = 3;
 
 integer g_iPrivateListenChan = 1;
 integer g_iPublicListenChan = TRUE;
@@ -22,14 +25,14 @@ integer g_iHUDChan;
 //MESSAGE MAP
 integer CMD_ZERO = 0;
 integer CMD_OWNER = 500;
-//integer CMD_TRUSTED = 501;
-//integer CMD_GROUP = 502;
+integer CMD_TRUSTED = 501;
+integer CMD_GROUP = 502;
 integer CMD_WEARER = 503;
-//integer CMD_EVERYONE = 504;
+integer CMD_EVERYONE = 504;
 //integer CMD_RLV_RELAY = 507;
 integer CMD_SAFEWORD = 510;
 //integer CMD_RELAY_SAFEWORD = 511;
-//integer CMD_BLOCKED = 520;
+integer CMD_BLOCKED = 520;
 
 //integer POPUP_HELP = 1001;
 integer NOTIFY=1002;
@@ -65,8 +68,8 @@ string g_sSafeWord = "RED";
 integer g_iInterfaceChannel;
 integer g_iListenHandleAtt;
 
-integer AUTH_REQUEST = 600;
-integer AUTH_REPLY = 601;
+//integer AUTH_REQUEST = 600;
+//integer AUTH_REPLY = 601;
 
 key g_kWearer;
 //string g_sSettingToken = "com_";
@@ -146,17 +149,18 @@ sendCommandFromLink(integer iLinkNumber, string sType, key kToucher) {
     list lDescTokens = llParseStringKeepNulls(sDesc, ["~"], []);
     integer iNDescTokens = llGetListLength(lDescTokens);
     integer iDescToken;
+    integer iAuth = Auth(kToucher);
     for (iDescToken = 0; iDescToken < iNDescTokens; iDescToken++) {
         string sDescToken = llList2String(lDescTokens, iDescToken);
         if (sDescToken == sType || sDescToken == sType+":" || sDescToken == sType+":none") return;
         else if (!llSubStringIndex(sDescToken, sType+":")) {
             string sCommand = llGetSubString(sDescToken, llStringLength(sType)+1, -1);
-            if (sCommand != "") llMessageLinked(LINK_AUTH, CMD_ZERO, sCommand, kToucher);
+            if (sCommand != "") llMessageLinked(LINK_SET, iAuth, sCommand, kToucher);
             return;
         }
     }
     if (sType == "touchstart") {
-        llMessageLinked(LINK_AUTH, CMD_ZERO, "menu", kToucher);
+        llMessageLinked(LINK_SET, iAuth, "menu", kToucher);
         if (g_iTouchNotify && kToucher!=g_kWearer)
             llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nsecondlife:///app/agent/"+(string)kToucher+"/about touched your %DEVICETYPE%.\n",g_kWearer);
     }
@@ -334,6 +338,66 @@ SafeDelete(string item) {
     llRemoveInventory(item);
 }
 
+integer in_range(key kID) {
+    if ((integer)getGlobalVariable("iLimitRange")) {
+        if (llVecDist(llGetPos(), llList2Vector(llGetObjectDetails(kID, [OBJECT_POS]), 0)) > 20) //if the distance between my position and their position  > 20
+            return FALSE;
+    }
+    return TRUE;
+}
+
+integer Auth(string sObjID) {
+    string sID = (string)llGetOwnerKey(sObjID); // if sObjID is an avatar key, then sID is the same key
+    integer iNum;
+
+    if (hasAuth(OWNER_LIST,sID) || getGlobalVariable("kTempOwner") == sID)
+        iNum = CMD_OWNER;
+    else if ((llJsonGetValue(getAuthList(OWNER_LIST),["owner"]) == "" && getGlobalVariable("kTempOwner") == "") && sID == g_kWearer)
+        //if no owners set, then wearer's cmds have owner auth
+        iNum = CMD_OWNER;
+    else if (hasAuth(BLOCK_LIST,sID))
+        iNum = CMD_BLOCKED;
+    else if (hasAuth(TRUST_LIST,sID))
+        iNum = CMD_TRUSTED;
+    else if (sID == g_kWearer)
+        iNum = CMD_WEARER;
+    else if ((integer)getGlobalVariable("iOpenAccess"))
+        if (in_range((key)sID))
+            iNum = CMD_GROUP;
+        else
+            iNum = CMD_EVERYONE;
+    else if ((integer)getGlobalVariable("iGroupEnabled") && (string)llGetObjectDetails((key)sObjID, [OBJECT_GROUP]) == getGlobalVariable("kGroup") && (key)sID != g_kWearer)  //meaning that the command came from an object set to our control group, and is not owned by the wearer
+        iNum = CMD_GROUP;
+    else if (llSameGroup(sID) && (integer)getGlobalVariable("iGroupEnabled") && sID != g_kWearer) {
+        if (in_range((key)sID))
+            iNum = CMD_GROUP;
+        else
+            iNum = CMD_EVERYONE;
+    } else
+        iNum = CMD_EVERYONE;
+    //Debug("Authed as "+(string)iNum);
+    return iNum;
+}
+
+string getAuthList(integer iList)
+{
+    return (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
+}
+
+string strReplace(string str, string search, string replace) {
+    return llDumpList2String(llParseStringKeepNulls((str = "") + str, [search], []), replace);
+}
+
+integer hasAuth(integer iList, string kID)
+{
+    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]), kID);
+}
+
+string getGlobalVariable(string gVariable)
+{
+    return llJsonGetValue((string)llGetLinkMedia(LINK_AUTH,0,[PRIM_MEDIA_HOME_URL]), [gVariable]);
+}
+
 default {
     on_rez(integer iParam) {
         llResetScript();
@@ -371,25 +435,24 @@ default {
     }
 
     listen(integer iChan, string sSpeaker, key kID, string sMsg) {
+        integer iAuth = Auth(llGetOwnerKey(kID));
         if (iChan == g_iHUDChan) {
             //check for a ping, if we find one we request auth and answer in LMs with a pong
-            if (sMsg==(string)g_kWearer + ":ping")
-                llMessageLinked(LINK_AUTH, CMD_ZERO, "ping", llGetOwnerKey(kID));
+            if (sMsg==(string)g_kWearer + ":ping") llMessageLinked(LINK_SET, iAuth, "ping", llGetOwnerKey(kID));
             // it it is not a ping, it should be a command for use, to make sure it has to have the key in front of it
             else if (!llSubStringIndex(sMsg,(string)g_kWearer + ":")){
                 sMsg = llGetSubString(sMsg, 37, -1);
-                llMessageLinked(LINK_AUTH, CMD_ZERO, sMsg, llGetOwnerKey(kID));
+                llMessageLinked(LINK_SET, iAuth, sMsg, llGetOwnerKey(kID));
             } else if (iChan == g_iInterfaceChannel && llGetOwnerKey(kID) == g_kWearer) { //for the rare but possible case g_iHUDChan == g_iInterfaceChannel
                 if (sMsg == "OpenCollar?") llRegionSayTo(g_kWearer, g_iInterfaceChannel, "OpenCollar=Yes");
                 else if (sMsg == "OpenCollar=Yes" && g_iHighlander) llRegionSayTo(kID,g_iInterfaceChannel,"There can be only one!");
                 else if (sMsg == "There can be only one!" && llGetOwnerKey(kID) == g_kWearer && g_iHighlander) {
                     llOwnerSay("/me has been detached.");
                     llRequestPermissions(g_kWearer,PERMISSION_ATTACH);
-                } else if (llSubStringIndex(sMsg, "AuthRequest")==0)
-                    llMessageLinked(LINK_AUTH,AUTH_REQUEST,(string)kID+(string)g_iInterfaceChannel,llGetSubString(sMsg,12,-1));
-                else llMessageLinked(LINK_AUTH, CMD_ZERO, sMsg, llGetOwnerKey(kID));
+                } else if (llSubStringIndex(sMsg, "AuthRequest")==0) llRegionSayTo(kID, g_iInterfaceChannel, "AuthReply|"+(string)kID+"|"+(string)Auth(kID));
+                else llMessageLinked(LINK_SET, iAuth, sMsg, llGetOwnerKey(kID));
             } else
-                llMessageLinked(LINK_AUTH, CMD_ZERO, sMsg, llGetOwnerKey(kID));
+                llMessageLinked(LINK_SET, iAuth, sMsg, llGetOwnerKey(kID));
             return;
         }
         if (iChan == g_iLockMeisterChan) {
@@ -436,9 +499,7 @@ default {
                 llOwnerSay("/me has been detached.");
                 llRequestPermissions(g_kWearer,PERMISSION_ATTACH);
             } else { // attachments can send auth request: llRegionSayTo(g_kWearer,g_InteraceChannel,"AuthRequest|UUID");
-                if (llSubStringIndex(sMsg, "AuthRequest")==0) {
-                    llMessageLinked(LINK_AUTH,AUTH_REQUEST,(string)kID+(string)g_iInterfaceChannel,llGetSubString(sMsg,12,-1));
-                }
+                if (llSubStringIndex(sMsg, "AuthRequest")==0) llRegionSayTo(kID, g_iInterfaceChannel, "AuthReply|"+(string)kID+"|"+(string)Auth(kID));
             }
         } else { //check for our prefix, or *
             if (!llSubStringIndex(sMsg, g_sPrefix)) sMsg = llGetSubString(sMsg, llStringLength(g_sPrefix), -1); //strip our prefix from command
@@ -465,13 +526,19 @@ default {
                     return;
                 }
                 //Debug("Got comand "+sMsg);
-                llMessageLinked(LINK_AUTH, CMD_ZERO, sMsg, kID);
+                integer iAuth = Auth(kID);
+                llMessageLinked(LINK_SET, iAuth, sMsg, kID);
             }
         }
     }
 
     link_message(integer iSender, integer iNum, string sStr, key kID) {
-        if (iNum >= CMD_OWNER && iNum <= CMD_WEARER) UserCommand(kID, iNum, sStr);
+        if (iNum == CMD_ZERO) { //authenticate messages on CMD_ZERO
+            integer iAuth = Auth(kID);
+            if (sStr != "runaway") llMessageLinked(LINK_SET, iAuth, sStr, kID);
+            return; // NOAUTH messages need go no further
+        }        
+        else if (iNum >= CMD_OWNER && iNum <= CMD_WEARER) UserCommand(kID, iNum, sStr);
         else if (iNum == LM_SETTING_RESPONSE) {
             list lParams = llParseString2List(sStr, ["="], []);
             string sToken = llList2String(lParams, 0);
@@ -520,7 +587,7 @@ default {
                 if (g_iNeedsPose && [] == g_lTouchRequests) llStopAnimation(g_sPOSE_ANIM);
             }
         } //needed to be the same ID that send earlier pings or pongs
-        else if (iNum == AUTH_REPLY) llRegionSayTo(kID, g_iInterfaceChannel, sStr);
+        //else if (iNum == AUTH_REPLY) llRegionSayTo(kID, g_iInterfaceChannel, sStr);
         else if (iNum == REBOOT && sStr == "reboot") {
             if (llGetInventoryType("oc_relay") == INVENTORY_SCRIPT) {
                 if (!llGetScriptState("oc_relay")) {

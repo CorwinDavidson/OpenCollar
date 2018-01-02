@@ -220,7 +220,7 @@ default{
         if (g_sTempOwnerID) return;  //no one can capture if already captured
         if (!g_iCaptureOn) return;  //no one can capture if disabled
         if (llVecDist(llDetectedPos(0),llGetPos()) > 10 ) llMessageLinked(LINK_SET,NOTIFY,"0"+"You could capture %WEARERNAME% if you get a bit closer.",kToucher);
-        else llMessageLinked(LINK_AUTH,CMD_ZERO,"capture TempOwner~"+(string)kToucher,kToucher);
+        else llMessageLinked(LINK_SET,CMD_ZERO,"capture TempOwner~"+(string)kToucher,kToucher);
     }
 
     link_message(integer iSender, integer iNum, string sStr, key kID) {

@@ -271,7 +271,7 @@ UserCommand(integer iNum, string sStr, key kID, integer fromMenu) {
         key kAv = (key)llList2String(lParams, 1);
         if (llGetAgentSize(kAv) != ZERO_VECTOR) {//if kAv is an avatar in this region
             if(llGetOwnerKey(kID)==kAv) MainMenu(kID, iNum);    //if the request was sent by something owned by that agent, send a menu
-            else  llMessageLinked(LINK_AUTH, CMD_ZERO, "menu", kAv);   //else send an auth request for the menu
+            else  llMessageLinked(LINK_SET, CMD_ZERO, "menu", kAv);   //else send an auth request for the menu
         }
     } else if (sCmd == "lock" || (!g_iLocked && sStr == "togglelock")) {    //does anything use togglelock?  If not, it'd be nice to get rid of it
         //Debug("User command:"+sCmd);
