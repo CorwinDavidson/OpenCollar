@@ -352,7 +352,7 @@ integer Auth(string sObjID) {
 
     if (hasAuth(OWNER_LIST,sID) || getGlobalVariable("kTempOwner") == sID)
         iNum = CMD_OWNER;
-    else if ((llJsonGetValue(getAuthList(OWNER_LIST),["owner"]) == "" && getGlobalVariable("kTempOwner") == "") && sID == g_kWearer)
+    else if ((!getAuthListLength(OWNER_LIST) && getGlobalVariable("kTempOwner") == "") && sID == g_kWearer)
         //if no owners set, then wearer's cmds have owner auth
         iNum = CMD_OWNER;
     else if (hasAuth(BLOCK_LIST,sID))
@@ -382,6 +382,16 @@ integer Auth(string sObjID) {
 string getAuthList(integer iList)
 {
     return (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
+}
+
+integer getAuthListLength(integer iList)
+{
+    string sAuthToken;
+    if (iList == OWNER_LIST) sAuthToken = "owner";
+    else if (iList == TRUST_LIST) sAuthToken = "trust";
+    else if (iList == BLOCK_LIST) sAuthToken = "block";
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]);
+    return (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
 }
 
 string strReplace(string str, string search, string replace) {

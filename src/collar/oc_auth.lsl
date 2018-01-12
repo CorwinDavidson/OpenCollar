@@ -128,18 +128,18 @@ AuthMenu(key kAv, integer iAuth) {
 }
 
 RemPersonMenu(key kID, string sToken, integer iAuth) {
-    list lPeople;
-    if (sToken=="owner") lPeople = llJson2List(llJsonGetValue(getAuthList(OWNER_LIST),[sToken]));
-    else if (sToken=="trust") lPeople = llJson2List(llJsonGetValue(getAuthList(TRUST_LIST),[sToken]));
-    else if (sToken=="block") lPeople = llJson2List(llJsonGetValue(getAuthList(BLOCK_LIST),[sToken]));
+    integer iList;
+    if (sToken=="owner") iList = OWNER_LIST;
+    else if (sToken=="trust") iList = TRUST_LIST;
+    else if (sToken=="block") iList = BLOCK_LIST;
     else return;
-    if (llGetListLength(lPeople)){
+    if (getAuthListLength(iList)){
         string sPrompt = "\nChoose the person to remove:\n";
         list lButtons;
-        integer iNum= llGetListLength(lPeople);
-        integer n;
-        for(;n<iNum;n=n+1) {
-            string sName = llList2String(lPeople,n);
+        integer iNum=getAuthListLength(iList);
+        integer n = 1;
+        for(;n<=iNum;n=n+1) {
+            string sName = llJsonGetValue(getAuthList(iList),[sToken,n]);
             if (sName) lButtons += [sName];
         }
         Dialog(kID, sPrompt, lButtons, ["Remove All",UPMENU], -1, iAuth, "remove"+sToken, FALSE);
@@ -206,13 +206,13 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
     integer isTrusted = FALSE;
     integer isBlocked = FALSE;
 
-    //Debug(NameURI(kID)+" is adding "+NameURI(sPersonID)+" to list "+sToken);
     if ((kTempOwner == (string)kID) && ! hasAuth(OWNER_LIST,(string)kID) && sToken != "tempowner")    
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
     else {
         integer iListID = llListFindList(["tempowner","owner","trust","block"],[sToken]); 
         if (~llListFindList(["owner","trust","block"],[sToken])) 
-        {       
+        {
+            integer iListID = llListFindList(["tempowner","owner","trust","block"],[sToken]);            
             isOwner = hasAuth(OWNER_LIST,sPersonID);
             isTrusted = hasAuth(TRUST_LIST,sPersonID);
             isBlocked = hasAuth(BLOCK_LIST,sPersonID);
@@ -281,42 +281,33 @@ AddUniquePerson(string sPersonID, string sToken, key kID) {
 }
 
 SayOwners() {  // Give a "you are owned by" message, nicely formatted.
-    list lTemp = llJson2List(llJsonGetValue(getAuthList(OWNER_LIST),["owner"]));
-    integer iCount = llGetListLength(lTemp);
-
+    integer iCount = getAuthListLength(OWNER_LIST);
+    integer selfhasauth = hasAuth(OWNER_LIST,g_sWearerID);
+    integer index;
     if (iCount) {
-        integer index = llListFindList(lTemp, [g_sWearerID]);
         //if wearer is also owner, move the key to the end of the list.
-        if (~index) lTemp = llDeleteSubList(lTemp,index,index) + [g_sWearerID];
         string sMsg = "You belong to ";
         if (iCount == 1) {
-            if (llList2Key(lTemp,0)==g_sWearerID)
+            if (selfhasauth)
                 sMsg += "yourself.";
             else
-                sMsg += NameURI(llList2String(lTemp,0))+".";
-        } else if (iCount == 2) {
-            sMsg +=  NameURI(llList2String(lTemp,0))+" and ";
-            if (llList2String(lTemp,1)==g_sWearerID)
-                sMsg += "yourself.";
-            else
-                sMsg += NameURI(llList2Key(lTemp,1))+".";
-        } else {
-            index=0;
+                sMsg += NameURI(llJsonGetValue(getAuthList(OWNER_LIST),["owner",1]))+".";
+        } 
+        else {
+            index=1;
             do {
-                sMsg += NameURI(llList2String(lTemp,index))+", ";
+                if (llJsonGetValue(getAuthList(OWNER_LIST),["owner",index]) != g_sWearerID)
+                    sMsg += NameURI(llJsonGetValue(getAuthList(OWNER_LIST),["owner",index]))+", ";
                 index+=1;
             } while (index<iCount-1 && index < 9 );
-            if (iCount > 10) {
-                sMsg += NameURI(llList2String(lTemp,index))+" et al.";
-                if (llList2String(lTemp,index) == g_sWearerID)
-                    sMsg += " and yourself.";
-            }
-            else {
-                if (llList2String(lTemp,index) == g_sWearerID)
-                    sMsg += "and yourself.";
+            if (llJsonGetValue(getAuthList(OWNER_LIST),["owner",index]) != g_sWearerID) {
+                if (iCount > 10)
+                    sMsg += NameURI(llJsonGetValue(getAuthList(OWNER_LIST),["owner",index]))+" et al.";
                 else
-                    sMsg += "and "+NameURI(llList2String(lTemp,index))+".";     
+                    sMsg += "and "+NameURI(llJsonGetValue(getAuthList(OWNER_LIST),["owner",index]))+".";     
             }
+            if (selfhasauth)
+                sMsg += " and yourself.";            
         }
         llMessageLinked(LINK_DIALOG,NOTIFY,"0"+sMsg,g_sWearerID);
  //       Debug("Lists Loaded!");
@@ -334,10 +325,10 @@ integer in_range(key kID) {
 integer Auth(string sObjID) {
     string sID = (string)llGetOwnerKey(sObjID); // if sObjID is an avatar key, then sID is the same key
     integer iNum;
-         
+      
     if (hasAuth(OWNER_LIST,sID) || getGlobalVariable("kTempOwner") == sID)
         iNum = CMD_OWNER;
-    else if ((llJsonGetValue(getAuthList(OWNER_LIST),["owner"]) == "" && getGlobalVariable("kTempOwner") == "") && sID == g_sWearerID)
+    else if ((!getAuthListLength(OWNER_LIST) && getGlobalVariable("kTempOwner") == "") && sID == g_sWearerID)
         //if no owners set, then wearer's cmds have owner auth
         iNum = CMD_OWNER;
     else if (hasAuth(BLOCK_LIST,sID))
@@ -374,11 +365,10 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
     else if (sStr == "list") {   //say owner, secowners, group
         if (iNum == CMD_OWNER || kID == g_sWearerID) {
             //Do Owners list
-            list lTemp = llJson2List(llJsonGetValue(getAuthList(OWNER_LIST),["owner"]));
-            integer iLength = llGetListLength(lTemp);
+            integer iLength = getAuthListLength(OWNER_LIST);
             string sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(lTemp, --iLength));
+                sOutput += "\n" + NameURI(llJsonGetValue(getAuthList(OWNER_LIST),["owner",iLength--]));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: "+sOutput,kID);
             else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Owners: none",kID);
             if (getGlobalVariable("kTempOwner") != "") iLength = 1;
@@ -387,19 +377,17 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
             if (iLength)
                 sOutput += "\n" + NameURI(getGlobalVariable("kTempOwner"));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary Owner: "+sOutput,kID);
-            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary: none",kID);  
-            lTemp = llJson2List(llJsonGetValue(getAuthList(TRUST_LIST),["trust"]));          
-            iLength = llGetListLength(lTemp);
+            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Temporary: none",kID);        
+            iLength = getAuthListLength(TRUST_LIST);
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(lTemp, --iLength));
+                sOutput += "\n" + NameURI(llJsonGetValue(getAuthList(TRUST_LIST),["trust",iLength--]));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: "+sOutput,kID);
-            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: none",kID);            
-            lTemp = llJson2List(llJsonGetValue(getAuthList(BLOCK_LIST),["block"]));   
-            iLength = llGetListLength(lTemp);
+            else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Trusted: none",kID);              
+            iLength = getAuthListLength(BLOCK_LIST);
             sOutput="";
             while (iLength)
-                sOutput += "\n" + NameURI(llList2String(lTemp, --iLength));
+                sOutput += "\n" + NameURI(llJsonGetValue(getAuthList(BLOCK_LIST),["block",iLength--]));
             if (sOutput) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Blocked: "+sOutput,kID);
             else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Blocked: none",kID);            
             //if (g_sGroupName) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Group: "+g_sGroupName,kID);
@@ -409,7 +397,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
             if ((integer)getGlobalVariable("iOpenAccess")) sOutput="open";
             llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Public Access: "+ sOutput,kID);
         }
-        else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%1",kID);
+        else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         if (iRemenu) AuthMenu(kID, iNum);
     } else if (sCommand == "ownself" || sCommand == llToLower(g_sFlavor)) {
         if (iNum == CMD_OWNER && !(getGlobalVariable("kTempOwner") == (string)kID)) {
@@ -420,7 +408,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
                 g_iOwnSelf = FALSE;
                 UserCommand(iNum, "rm owner " + g_sWearerID, kID, FALSE);
             }
-        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%2", kID);
+        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%", kID);
          if (iRemenu) AuthMenu(kID, iNum);
     } else if (sMessage == "owners" || sMessage == "access") {   //give owner menu
         AuthMenu(kID, iNum);
@@ -430,7 +418,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
         if (!~llListFindList(["owner","trust","block"],[sAction])) return; //not a valid command
         string sTmpID = llList2String(lParams,2); //get full name
         if (iNum!=CMD_OWNER && !( sAction == "trust" && kID==g_sWearerID )) {
-            llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%3",kID);
+            llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
             if (iRemenu) AuthMenu(kID, Auth(kID));
         } else if ((key)sTmpID){
             AddUniquePerson(sTmpID, sAction, kID);
@@ -441,7 +429,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
         if (!~llListFindList(["owner","trust","block"],[sAction])) return; //not a valid command
         string sTmpID = llDumpList2String(llDeleteSubList(lParams,0,1), " "); //get full name
         if (iNum != CMD_OWNER && !( sAction == "trust" && kID == g_sWearerID )) {
-            llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%4",kID);
+            llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
             if (iRemenu) AuthMenu(kID, Auth(kID));
         } else if ((key)sTmpID) {
             RemovePerson(sTmpID, sAction, kID, FALSE);
@@ -470,7 +458,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Group unset.",kID);
                 llMessageLinked(LINK_RLV, RLV_CMD, "setgroup=y", "auth");
             }
-        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%5",kID);
+        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         if (iRemenu) AuthMenu(kID, Auth(kID));
     } else if (sCommand == "public") {
         if (iNum==CMD_OWNER){
@@ -483,7 +471,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
                 llMessageLinked(LINK_SAVE, LM_SETTING_DELETE, g_sSettingToken + "public", "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"The %DEVICETYPE% is closed to the public.",kID);
             }
-        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%6",kID);
+        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         if (iRemenu) AuthMenu(kID, Auth(kID));
     } else if (sCommand == "limitrange") {
         if (iNum==CMD_OWNER){
@@ -498,14 +486,14 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
                 llMessageLinked(LINK_SAVE, LM_SETTING_SAVE, g_sSettingToken + "limitrange=" + getGlobalVariable("iLimitRange"), "");
                 llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Public access range is simwide.",kID);
             }
-        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%7",kID);
+        } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         if (iRemenu) AuthMenu(kID, Auth(kID));
     } else if (sMessage == "runaway"){
        // list lButtons=[];
       // string message;//="\nOnly the wearer or an Owner can access this menu";
         if (kID == g_sWearerID){  //wearer called for menu
             if (g_iRunawayDisable)
-                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%8",kID);
+                llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
             else {
                 Dialog(kID, "\nDo you really want to run away from all owners?", ["Yes", "No"], [UPMENU], 0, iNum, "runawayMenu",FALSE);
                 return;
@@ -513,7 +501,7 @@ UserCommand(integer iNum, string sStr, key kID, integer iRemenu) { // here iNum:
         } else llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"This feature is only for the wearer of the %DEVICETYPE%.",kID);
         if (iRemenu) AuthMenu(kID, Auth(kID));
     } else if (sCommand == "flavor") {
-        if (kID != g_sWearerID) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%9",kID);
+        if (kID != g_sWearerID) llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"%NOACCESS%",kID);
         else if (sAction) {
             g_sFlavor = llGetSubString(sStr,7,15);
             llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"\n\nYour new flavor is \""+g_sFlavor+"\".\n",kID);
@@ -547,16 +535,20 @@ modifyAuthList(integer iList, string kID, string iAction)
 
     if (iAction == "1") {
         sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,JSON_APPEND],kID);
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],(string)((integer)llJsonGetValue(sAuthJSON,[sAuthToken,0])+1));
     }
     else if (iAction == "-1")
     {
         sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken],"");
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],"0");
     }
     else {
-        sAuthJSON = strReplace(sAuthJSON, "\"" + kID + "\"", "");
-        sAuthJSON = strReplace(sAuthJSON, ",,", ",");        
+        if (hasAuth(iList,kID)) {
+            sAuthJSON = strReplace(sAuthJSON, ",\"" + kID + "\"", "");
+            sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],(string)((integer)llJsonGetValue(sAuthJSON,[sAuthToken,0])-1));
+        }
     }
-    
+
     integer iMax = llStringLength(sAuthJSON);
     
     if (iMax > 1024)
@@ -574,9 +566,20 @@ string getAuthList(integer iList)
     return (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
 }
 
+integer getAuthListLength(integer iList)
+{
+    string sAuthToken;
+    if (iList == OWNER_LIST) sAuthToken = "owner";
+    else if (iList == TRUST_LIST) sAuthToken = "trust";
+    else if (iList == BLOCK_LIST) sAuthToken = "block";
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]);
+    return (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
+}
+
 string strReplace(string str, string search, string replace) {
     return llDumpList2String(llParseStringKeepNulls((str = "") + str, [search], []), replace);
 }
+
 
 integer hasAuth(integer iList, string kID)
 {
@@ -616,7 +619,7 @@ default {
         modifyAuthList(OWNER_LIST,"","-1");
         modifyAuthList(TRUST_LIST,"","-1");
         modifyAuthList(BLOCK_LIST,"","-1");
-            }
+    }
 
     link_message(integer iSender, integer iNum, string sStr, key kID) {
         //llSetLinkPrimitiveParamsFast(LINK_THIS,[PRIM_FULLBRIGHT,ALL_SIDES,TRUE,PRIM_BUMP_SHINY,ALL_SIDES,PRIM_SHINY_NONE,PRIM_BUMP_NONE,PRIM_GLOW,ALL_SIDES,0.4]);
@@ -669,7 +672,7 @@ default {
                     }
                 else if (sToken == "flavor") g_sFlavor = sValue;
             } else if (llToLower(sStr) == "settings=sent") {
-                if (llJsonGetValue(getAuthList(OWNER_LIST),["owner"]) != "" && g_iFirstRun) {
+                if (getAuthListLength(OWNER_LIST) && g_iFirstRun) {
                     SayOwners();
                     g_iFirstRun = FALSE;
                 }
