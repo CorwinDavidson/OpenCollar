@@ -3,11 +3,11 @@
 // Licensed under the GPLv2.  See LICENSE for full details. 
 
 
-// Needs OpenCollar 3.9x or higher to work
+// Needs OpenCollar 6.x or higher to work
 
-// Sends a "ping" message on the collar command channel:
+// Sends a "<wearer_uuid>:ping" message on the collar command channel:
 // Collar answers with "<wearer_uuid>:pong"
-// Sends a leashto command on the collar command channel to grab them
+// Sends a anchor command on the collar command channel to grab them
 
 // constants
 float RANGE=20.0;       // scanning range
@@ -33,12 +33,8 @@ list listeners=[];      // collar pong listeners per victim
 //=
 //= returns      : Channel iNumber to be used
 //===============================================================================
-integer GetOwnerChannel(key kOwner, integer iOffset)
-{
-    integer iChan = (integer)("0x"+llGetSubString((string)kOwner,2,7)) + iOffset;
-    if (iChan > 0) iChan *= -1;
-    if (iChan > -10000) iChan -= 30000;
-    return iChan;
+integer PersonalChannel(string sID, integer iOffset) {
+    return -llAbs((integer)("0x"+llGetSubString(sID,-7,-1)) + iOffset);
 }
 
 // resets the menu dialog
@@ -75,9 +71,9 @@ notFound(key k)
 // leash a victim
 leash(key k)
 {
-    integer channel=GetOwnerChannel(k,1111);
+    integer channel=PersonalChannel((string)k,0);
     llRegionSayTo(k,channel,"length "+(string) LEASH_LENGTH);
-    llRegionSayTo(k,channel,"leashto "+(string) llGetKey());
+    llRegionSayTo(k,channel,"anchor "+(string) llGetKey());
 }
 
 default
@@ -236,14 +232,14 @@ default
             if(k!=menuUser)
             {
                 // calculate collar channel per victim and add a listener
-                channel=GetOwnerChannel(k,1111);
+                channel=PersonalChannel((string)k,0);
                 listeners+=
                 [
                     llListen(channel,"",NULL_KEY,"")
                 ];
 
                 // ping victim's collar
-                llRegionSayTo(k,channel,"ping");
+                llRegionSayTo(k,channel,(string)k+":ping");
             }
         }
 
