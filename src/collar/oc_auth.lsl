@@ -531,7 +531,7 @@ modifyAuthList(integer iList, string kID, string iAction)
     if (iList == OWNER_LIST) sAuthToken = "owner";
     else if (iList == TRUST_LIST) sAuthToken = "trust";
     else if (iList == BLOCK_LIST) sAuthToken = "block";
-    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]);
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
 
     if (iAction == "1") {
         sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,JSON_APPEND],kID);
@@ -572,7 +572,7 @@ integer getAuthListLength(integer iList)
     if (iList == OWNER_LIST) sAuthToken = "owner";
     else if (iList == TRUST_LIST) sAuthToken = "trust";
     else if (iList == BLOCK_LIST) sAuthToken = "block";
-    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]);
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
     return (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
 }
 
@@ -583,7 +583,7 @@ string strReplace(string str, string search, string replace) {
 
 integer hasAuth(integer iList, string kID)
 {
-    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]), kID);
+    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]), kID);
 }
 
 setGlobalVariable(string gVariable, string gValue)

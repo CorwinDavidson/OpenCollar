@@ -349,7 +349,7 @@ integer in_range(key kID) {
 integer Auth(string sObjID) {
     string sID = (string)llGetOwnerKey(sObjID); // if sObjID is an avatar key, then sID is the same key
     integer iNum;
-
+      
     if (hasAuth(OWNER_LIST,sID) || getGlobalVariable("kTempOwner") == sID)
         iNum = CMD_OWNER;
     else if ((!getAuthListLength(OWNER_LIST) && getGlobalVariable("kTempOwner") == "") && sID == g_kWearer)
@@ -390,7 +390,7 @@ integer getAuthListLength(integer iList)
     if (iList == OWNER_LIST) sAuthToken = "owner";
     else if (iList == TRUST_LIST) sAuthToken = "trust";
     else if (iList == BLOCK_LIST) sAuthToken = "block";
-    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]);
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
     return (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
 }
 
@@ -400,7 +400,7 @@ string strReplace(string str, string search, string replace) {
 
 integer hasAuth(integer iList, string kID)
 {
-    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]), kID);
+    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]), kID);
 }
 
 string getGlobalVariable(string gVariable)

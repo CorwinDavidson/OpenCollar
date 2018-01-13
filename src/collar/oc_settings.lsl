@@ -21,6 +21,10 @@ key g_kWearer;
 //string g_sSettingToken = "settings_";
 //string g_sGlobalToken = "global_";
 
+integer OWNER_LIST = 1;
+integer TRUST_LIST = 2;
+integer BLOCK_LIST = 3;
+
 //MESSAGE MAP
 //integer CMD_ZERO = 0;
 integer CMD_OWNER = 500;
@@ -44,6 +48,7 @@ integer LM_SETTING_EMPTY = 2004;
 
 integer DIALOG = -9000;
 integer DIALOG_RESPONSE = -9001;
+integer LINK_AUTH = -2;
 integer LINK_DIALOG = 3;
 integer LINK_UPDATE = -10;
 integer REBOOT = -1000;
@@ -221,6 +226,7 @@ LoadSetting(string sData, integer iLine) {
         else if (~llListFindList(g_lExceptionTokens,[sID])) return;
         sID = llToLower(sID)+"_";
         list lData = llParseString2List(sData, ["~"], []);
+        sData = "";
         for (i = 0; i < llGetListLength(lData); i += 2) {
             sToken = llList2String(lData, i);
             sValue = llList2String(lData, i + 1);
@@ -228,21 +234,29 @@ LoadSetting(string sData, integer iLine) {
                 if (sID == "auth_") { //if we have auth, can only be the below, else we dont care
                     sToken = llToLower(sToken);
                     if (~llListFindList(["block","trust","owner"],[sToken])) {
-                        list lTest = llParseString2List(sValue,[","],[]);
-                        list lOut;
+                        integer iMax = llStringLength(sValue);
                         integer n;
-                        do {//sanity check for valid entries
-                            if (llList2Key(lTest,n)) //if this is not a valid key, it's useless
-                                lOut += llList2String(lTest,n);
-                            integer iTest = llGetListLength(lOut);
-                            if (sToken == "owner" &&  iTest == 35)  jump next;
-                            else if (sToken == "trust" &&  iTest == 35)  jump next;
-                            else if (sToken == "block" &&  iTest == 35)  jump next;
-                        } while (++n < llGetListLength(lTest));
+                        integer iListID;
+                        if (sToken == "owner") iListID = OWNER_LIST;
+                        else if (sToken == "trust") iListID = TRUST_LIST;
+                        else if (sToken == "block") iListID = BLOCK_LIST;
+                        modifyAuthList(iListID,"","-1");
+                        string uuid;
+                        do {
+                            uuid = llGetSubString(sValue,n,n+35);
+                            if ((key)uuid)
+                                modifyAuthList(iListID, uuid,"1");
+                            llSleep(0.2);    
+
+                            integer iTest = getAuthListLength(iListID);                           
+                            if (sToken == "owner" &&  iTest == 30)  jump next;
+                            else if (sToken == "trust" &&  iTest == 30)  jump next;
+                            else if (sToken == "block" &&  iTest == 30)  jump next;
+                            llOwnerSay((string)iTest + " " + (string)n + " " + (string)iMax + " " +(string)llGetFreeMemory());
+                            n=n+37;
+                        } while (n < iMax);
                         @next;
-                        sValue = llDumpList2String(lOut,",");
-                        lTest = [];
-                        lOut = [];
+                        //sValue = llDumpList2String(lOut,",");
                     }
                 }
                 if (sValue) g_lSettings = SetSetting(g_lSettings, sID + sToken, sValue);
@@ -308,6 +322,67 @@ UserCommand(integer iAuth, string sStr, key kID) {
     else if (sStrLower == "runaway") llSetTimerEvent(2.0);
 }
 
+modifyAuthList(integer iList, string kID, string iAction)
+{
+    if (LINK_AUTH < 0) return;
+    string sAuthToken;
+    if (iList == OWNER_LIST) sAuthToken = "owner";
+    else if (iList == TRUST_LIST) sAuthToken = "trust";
+    else if (iList == BLOCK_LIST) sAuthToken = "block";
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
+    integer iCount = (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
+    if (iAction == "1" && !hasAuth(iList,kID)) {
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,JSON_APPEND],kID);
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],(string)(iCount+1));
+    }
+    else if (iAction == "-1")
+    {
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken],"");
+        sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],"0");
+    }
+    else {
+        if (hasAuth(iList,kID)) {
+            sAuthJSON = strReplace(sAuthJSON, ",\"" + kID + "\"", "");
+            sAuthJSON = llJsonSetValue(sAuthJSON,[sAuthToken,0],(string)(iCount-1));
+        }
+    }
+
+    integer iMax = llStringLength(sAuthJSON);
+    
+    if (iMax > 1024)
+    {
+         llSetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL,llGetSubString(sAuthJSON,0,1023),PRIM_MEDIA_WHITELIST,llGetSubString(sAuthJSON,1024,iMax),PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+    }
+    else if (iMax <= 1024)
+    {
+        llSetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL,sAuthJSON,PRIM_MEDIA_WHITELIST,"",PRIM_MEDIA_PERMS_CONTROL,PRIM_MEDIA_PERM_NONE,PRIM_MEDIA_PERMS_INTERACT,PRIM_MEDIA_PERM_NONE]);
+    }
+    sAuthJSON="";
+}
+
+string getAuthList(integer iList)
+{
+    return (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
+}
+
+integer getAuthListLength(integer iList)
+{
+    string sAuthToken;
+    if (iList == OWNER_LIST) sAuthToken = "owner";
+    else if (iList == TRUST_LIST) sAuthToken = "trust";
+    else if (iList == BLOCK_LIST) sAuthToken = "block";
+    string sAuthJSON = (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_WHITELIST]);
+    return (integer)llJsonGetValue(sAuthJSON,[sAuthToken,0]);
+}
+
+string strReplace(string str, string search, string replace) {
+    return llDumpList2String(llParseStringKeepNulls((str = "") + str, [search], []), replace);
+}
+
+integer hasAuth(integer iList, string kID)
+{
+    return ~llSubStringIndex((string)llGetLinkMedia(LINK_AUTH,iList,[PRIM_MEDIA_HOME_URL]) + (string)llGetLinkMedia(LINK_THIS,iList,[PRIM_MEDIA_WHITELIST]), kID);
+}
 default {
     state_entry() {
         if (llGetStartParameter()==825) llSetRemoteScriptAccessPin(0);
@@ -322,6 +397,7 @@ default {
              g_kCardID = llGetInventoryKey(g_sCard);
             } else if (g_lSettings) llMessageLinked(LINK_ALL_OTHERS, LM_SETTING_RESPONSE, llDumpList2String(g_lSettings, "="), "");
         }
+        llOwnerSay((string)llGetFreeMemory());
     }
 
     on_rez(integer iParam) {
@@ -355,6 +431,8 @@ default {
                     llMessageLinked(LINK_DIALOG,NOTIFY,"0"+"Invalid URL. You need to provide a raw text file like this: "+g_sSampleURL,g_kURLLoadRequest);
                 else {
                     list lLoadSettings = llParseString2List(sBody,["\n"],[]);
+                    llOwnerSay((string)llGetFreeMemory());
+                    sBody = "";
                     if (lLoadSettings) {
                         llMessageLinked(LINK_DIALOG,NOTIFY,"1"+"Settings fetched.",g_kURLLoadRequest);
                         integer i;
@@ -417,7 +495,8 @@ default {
             llSetRemoteScriptAccessPin(iPin);
             llMessageLinked(iSender, LOADPIN, (string)iPin+"@"+llGetScriptName(),llGetKey());
         } else if (iNum == LINK_UPDATE) {
-            if (sStr == "LINK_DIALOG") LINK_DIALOG = iSender;
+            if (sStr == "LINK_AUTH") { LINK_AUTH = iSender; llOwnerSay("Link_Auth: " + (string)LINK_AUTH); }
+            else if (sStr == "LINK_DIALOG") LINK_DIALOG = iSender;
             else if (sStr == "LINK_REQUEST") llMessageLinked(LINK_ALL_OTHERS,LINK_UPDATE,"LINK_SAVE","");
         }
     }
